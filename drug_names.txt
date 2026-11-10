@@ -2,3 +2,24 @@ Amoxicillin
 Metformin
 Lisinopril
 Atorvastatin
+Acetaminophen
+Amlodipine
+Azithromycin
+Cephalexin
+Ciprofloxacin
+Clavulanate
+Gabapentin
+Hydrochlorothiazide
+Levothyroxine
+Losartan
+Metoprolol
+Omeprazole
+Pantoprazole
+Prednisone
+Sertraline
+Simvastatin
+Sulfamethoxazole
+Trimethoprim
+Amoxicillin Clavulanate
+Prednisone
+Levocetirizine
