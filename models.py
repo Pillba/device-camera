@@ -30,7 +30,6 @@ class MedicationRecord:
     def as_dict(self) -> Dict[str, object]:
         data: Dict[str, object] = {
             "medicine_name": self.medicine_name,
-            "instructions": self.instructions,
             "quantity": self.quantity,
             "raw_text": self.raw_text,
         }

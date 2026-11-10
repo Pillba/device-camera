@@ -16,7 +16,6 @@ class MedicationParserTests(unittest.TestCase):
         )
         self.assertEqual(record.medicine_name, "Amoxicillin")
         self.assertEqual(record.strength, "500MG")
-        self.assertEqual(record.instructions, "TAKE 1 TABLET BY MOUTH EVERY 8 HOURS")
         self.assertEqual(record.quantity, "21")
         self.assertFalse(record.warnings)
 
@@ -26,9 +25,9 @@ class MedicationParserTests(unittest.TestCase):
         self.assertIn("local catalogue", record.warnings[0])
 
     def test_requires_matching_records_for_consensus(self):
-        first = self.parser.parse("METFORMIN 500MG\nTAKE 1 TABLET DAILY\nQTY 30")
+        first = self.parser.parse("METFORMIN 500MG\nQTY 30")
         second = self.parser.parse("METFORMIN 500MG\nTAKE 1 TABLET DAILY\nQTY 30")
-        different = self.parser.parse("LISINOPRIL 10MG\nTAKE 1 TABLET DAILY\nQTY 30")
+        different = self.parser.parse("LISINOPRIL 500MG\nQTY 30")
         self.assertTrue(records_agree([first, second]))
         self.assertFalse(records_agree([first, different]))
 

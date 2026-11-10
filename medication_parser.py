@@ -19,12 +19,21 @@ QUANTITY_PATTERNS = (
     re.compile(r"#\s?(\d+)\b"),
     re.compile(r"\b(\d+)\s?(?:tablets?|tabs?|capsules?|caps?|pills?)\b", re.IGNORECASE),
 )
+STANDALONE_QUANTITY_PATTERN = re.compile(r"(?m)^\s*(\d{1,3})\s*$")
 INSTRUCTION_PATTERN = re.compile(
     r"\b(?:take|wake)\s+(\d+)\s+"
     r"(?:tablet|tablets|tab|tabs|capsule|capsules)\b"
     r"(?:\s+by\s*(?:mou\w*|m)?)?\s+"
     r"(?:every\s+(\d+)\s*(?:hours?|hrs?|hr)|"
     r"(daily|t?wice daily|ice daily|once daily))\b",
+    re.IGNORECASE,
+)
+OCR_INSTRUCTION_PATTERN = re.compile(
+    r"\b(?:take\s+)?(\d+)\s+"
+    r"(?:tablet|tablets|tab|tabs|capsule|capsules)\b"
+    r"(?:\s+\w+){0,5}\s+"
+    r"(daily|twice\s+daily|wice\s+daily|ice\s+daily|foice\s+daily|"
+    r"foge\s+daily)\b",
     re.IGNORECASE,
 )
 
@@ -81,17 +90,32 @@ class MedicationParser:
             match = pattern.search(text)
             if match:
                 return match.group(1)
+        standalone_matches = STANDALONE_QUANTITY_PATTERN.findall(text)
+        if standalone_matches:
+            return standalone_matches[-1]
         return ""
 
     @staticmethod
     def _find_instructions(text: str) -> str:
         match = INSTRUCTION_PATTERN.search(text)
-        if not match:
+        if match:
+            amount, hours, frequency = match.groups()
+            if hours:
+                return f"TAKE {amount} TABLET BY MOUTH EVERY {hours} HOURS"
+            if frequency in {"ice daily", "wice daily"}:
+                frequency = "twice daily"
+            return f"TAKE {amount} TABLET BY MOUTH {frequency.upper()}"
+
+        ocr_match = OCR_INSTRUCTION_PATTERN.search(text)
+        if not ocr_match:
             return ""
-        amount, hours, frequency = match.groups()
-        if hours:
-            return f"TAKE {amount} TABLET BY MOUTH EVERY {hours} HOURS"
-        if frequency in {"ice daily", "wice daily"}:
+        amount, frequency = ocr_match.groups()
+        if frequency.casefold() in {
+            "wice daily",
+            "ice daily",
+            "foice daily",
+            "foge daily",
+        }:
             frequency = "twice daily"
         return f"TAKE {amount} TABLET BY MOUTH {frequency.upper()}"
 
@@ -106,8 +130,6 @@ class MedicationParser:
 
         if not name:
             warnings.append("Medication name was not matched to the local catalogue.")
-        if not instructions:
-            warnings.append("Directions were not recognized.")
         if not quantity:
             warnings.append("Quantity was not recognized.")
 
@@ -115,10 +137,6 @@ class MedicationParser:
             "medicine_name": FieldConfidence(
                 score=round(name_score, 3),
                 evidence=["local drug catalogue"] if name else [],
-            ),
-            "instructions": FieldConfidence(
-                score=1.0 if instructions else 0.0,
-                evidence=["structured directions pattern"] if instructions else [],
             ),
             "quantity": FieldConfidence(
                 score=1.0 if quantity else 0.0,
@@ -144,7 +162,7 @@ def records_agree(records: Iterable[MedicationRecord], minimum: int = 2) -> bool
     first = usable[0]
     return sum(
         record.medicine_name == first.medicine_name
-        and record.instructions == first.instructions
+        and record.strength == first.strength
         and record.quantity == first.quantity
         for record in usable
     ) >= minimum

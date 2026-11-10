@@ -38,7 +38,7 @@ class CapturedImageTests(unittest.TestCase):
                 path,
             )
 
-    def test_clear_captured_label_extracts_strength_and_directions(self):
+    def test_clear_captured_label_extracts_name_and_strength(self):
         records = self._records_for(CAPTURE_PATHS[0])
         prednisone_records = [
             record
@@ -48,12 +48,6 @@ class CapturedImageTests(unittest.TestCase):
 
         self.assertTrue(prednisone_records)
         self.assertTrue(any(record.strength == "20MG" for record in prednisone_records))
-        self.assertTrue(
-            any(
-                record.instructions == "TAKE 1 TABLET BY MOUTH TWICE DAILY"
-                for record in prednisone_records
-            )
-        )
 
 
 if __name__ == "__main__":

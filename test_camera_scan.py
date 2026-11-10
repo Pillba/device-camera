@@ -15,7 +15,7 @@ class CameraScanTests(unittest.TestCase):
     ):
         scan_and_save.return_value = {
             "medicine_name": "Amoxicillin",
-            "instructions": "TAKE 1 TABLET DAILY",
+            "strength": "500MG",
             "quantity": "10",
             "path": "records/result.json",
         }

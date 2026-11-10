@@ -34,9 +34,9 @@ for future clinical NLP experiments.
 
 ## Raspberry Pi installation
 
-These instructions target Raspberry Pi OS (64-bit, Bookworm or newer) with a
-USB camera. The Pi uses a Python virtual environment instead of the macOS
-Conda environment:
+These instructions target Raspberry Pi OS (64-bit, Bookworm or newer) with a USB
+camera. The Pi uses a Python virtual environment instead of the macOS Conda
+environment:
 
 ```sh
 sudo apt update
@@ -61,8 +61,7 @@ python -c "import cv2, pytesseract; print(cv2.__version__)"
 tesseract --version
 ```
 
-Connect the USB camera, then capture a fixture without opening a preview
-window:
+Connect the USB camera, then capture a fixture without opening a preview window:
 
 ```sh
 python camera_capture.py --camera-index 0 --output captures/pi-capture.jpg --no-preview
@@ -87,7 +86,8 @@ The reusable image pipeline is exposed through `scanner.py` and processes
 python -c "from medication_parser import MedicationParser; from scanner import scan_and_save; print(scan_and_save('example.jpg', MedicationParser('drug_names.txt')))"
 ```
 
-The scanner requires at least two OCR variants to agree before saving a record.
+The scanner requires at least two OCR variants to agree independently on the
+medicine name, dose/strength, and quantity before saving a record.
 If the result is incomplete or uncertain, it raises an error instead of silently
 saving OCR noise.
 
@@ -111,6 +111,27 @@ python camera_capture.py --camera-index 0 --output captures/capture.jpg --no-pre
 Use `--camera-index 1` or another index if the USB camera is not device 0.
 Captured images are standalone files; this module does not invoke OCR or write
 medication records.
+
+## Capture and process a label
+
+Run the end-to-end command to open the camera preview, capture the label by
+pressing **Space**, process it with OCR, and print the validated structured
+information:
+
+```sh
+python camera_scan.py
+```
+
+The captured image is saved to `captures/capture.jpg`, and the validated JSON
+record is saved under `records/`. Use `--camera-index` when the camera is not
+device 0, or `--output` and `--records-directory` to choose different paths:
+
+```sh
+python camera_scan.py --camera-index 1 --output captures/label.jpg
+```
+
+If capture or OCR validation fails, the command prints the error and exits
+without saving a medication record.
 
 ## Tests
 
@@ -139,12 +160,12 @@ python camera_capture.py --output captures/capture.jpg
 
 - **OCR extraction**: Runs multiple OpenCV preprocessing variants and Tesseract
   modes.
-- **Structured parsing**: Extracts medicine name, strength, directions, dosage
-  form, quantity, and warnings.
+- **Structured parsing**: Extracts medicine name, dose/strength, dosage form,
+  quantity, and warnings.
 - **Conservative matching**: Medication names must match the local
   `drug_names.txt` catalogue; OCR noise is not promoted to a drug name.
-- **Consensus validation**: A result must agree across multiple OCR variants
-  before the image pipeline saves it.
+- **Consensus validation**: Medicine name, dose/strength, and quantity must
+  agree across multiple OCR variants before the image pipeline saves it.
 - **Atomic JSON storage**: Records are written to `records/` only after
   successful validation.
 
@@ -154,6 +175,7 @@ python camera_capture.py --output captures/capture.jpg
 | ---------------------- | ----------------------------------------------------- |
 | `scanner.py`           | End-to-end image scanning and consensus orchestration |
 | `camera_capture.py`    | Standalone USB camera still-image capture             |
+| `camera_scan.py`       | Capture, process, save, and print one medication label |
 | `ocr_engine.py`        | Tesseract adapter for OCR candidates                  |
 | `text_normalizer.py`   | Line-preserving OCR normalization                     |
 | `medication_parser.py` | Drug matching and field extraction                    |
