@@ -8,17 +8,12 @@ import camera_scan
 
 
 class CameraScanTests(unittest.TestCase):
-    @patch("camera_scan.scan_and_save")
+    @patch("camera_scan.save_record")
     @patch("camera_scan.capture_image", return_value="captures/test.jpg")
     def test_captures_scans_and_prints_structured_result(
-        self, capture_image, scan_and_save
+        self, capture_image, save_record
     ):
-        scan_and_save.return_value = {
-            "medicine_name": "Amoxicillin",
-            "strength": "500MG",
-            "quantity": "10",
-            "path": "records/result.json",
-        }
+        save_record.return_value = "records/result.json"
         output = io.StringIO()
 
         with redirect_stdout(output):
@@ -39,7 +34,7 @@ class CameraScanTests(unittest.TestCase):
             camera_index=2,
             preview=True,
         )
-        scan_and_save.assert_called_once()
+        save_record.assert_called_once()
         self.assertEqual(json.loads(output.getvalue())["medicine_name"], "Amoxicillin")
 
     @patch("camera_scan.capture_image", side_effect=RuntimeError("camera unavailable"))

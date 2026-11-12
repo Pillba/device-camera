@@ -6,72 +6,44 @@ import cv2
 import pytesseract
 
 from medication_parser import MedicationParser
+from med7_validator import Med7Validator
 from models import MedicationRecord
 from ocr_engine import OcrEngine
 from storage import save_record
 
 
 def build_variants(image):
+    """Build illumination-resistant variants aligned with the capture guide."""
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     height, width = gray.shape
-    # Keep a broad label-focused pass so bottles that are off-center are not
-    # cropped before OCR. The full-frame variants remain as a fallback.
     label = gray[
-        int(height * 0.08):int(height * 0.96),
-        int(width * 0.05):int(width * 0.82),
+        int(height * 0.18):int(height * 0.82),
+        int(width * 0.08):int(width * 0.92),
     ]
-    original_label = gray[
-        int(height * 0.14):int(height * 0.96),
-        int(width * 0.39):int(width * 0.76),
-    ]
-    sources = [gray, label, original_label]
-    for angle in (-12, -8, 8, 12):
-        rotation = cv2.getRotationMatrix2D(
-            (width / 2, height / 2), angle, 1.0
-        )
-        rotated = cv2.warpAffine(
-            gray,
-            rotation,
-            (width, height),
-            borderMode=cv2.BORDER_REPLICATE,
-        )
-        sources.append(
-            rotated[
-                int(height * 0.08):int(height * 0.96),
-                int(width * 0.05):int(width * 0.82),
-            ]
-        )
-    variants = []
-    for source in sources:
-        resized = cv2.resize(
-            source, None, fx=2.6, fy=2.6, interpolation=cv2.INTER_CUBIC
-        )
-        variants.append(resized)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(resized)
-        variants.append(clahe)
-        blurred = cv2.GaussianBlur(clahe, (3, 3), 0)
-        _, otsu = cv2.threshold(
-            blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-        )
-        variants.append(otsu)
-        variants.append(
-            cv2.adaptiveThreshold(
-                blurred,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                31,
-                10,
-            )
-        )
-    label_clahe = variants[5]
-    label_height = label_clahe.shape[0]
-    text_lines = [
-        label_clahe[int(label_height * 0.16):int(label_height * 0.38)],
-        label_clahe[int(label_height * 0.37):int(label_height * 0.68)],
-    ]
-    variants.append(cv2.vconcat(text_lines))
-    return variants
+    resized_label = cv2.resize(
+        label, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC
+    )
+    denoised = cv2.bilateralFilter(resized_label, 9, 75, 75)
+    clahe = cv2.createCLAHE(
+        clipLimit=2.5, tileGridSize=(8, 8)
+    ).apply(denoised)
+    adaptive = cv2.adaptiveThreshold(
+        cv2.GaussianBlur(clahe, (3, 3), 0),
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        35,
+        11,
+    )
+    gaussian = cv2.GaussianBlur(clahe, (0, 0), 3.0)
+    sharpened = cv2.addWeighted(clahe, 1.5, gaussian, -0.5, 0)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
+    background = cv2.morphologyEx(resized_label, cv2.MORPH_CLOSE, kernel)
+    normalized = cv2.divide(resized_label, background, scale=255)
+    _, normalized_threshold = cv2.threshold(
+        normalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    return [resized_label, clahe, sharpened, adaptive, normalized_threshold]
 
 
 def scan_image(image_path: str, parser: MedicationParser) -> List[MedicationRecord]:
@@ -82,14 +54,24 @@ def scan_image(image_path: str, parser: MedicationParser) -> List[MedicationReco
         raise ValueError(f"Could not read image: {image_path}")
 
     engine = OcrEngine(
-        lambda variant, config: pytesseract.image_to_string(variant, config=config)
+        lambda variant, config: pytesseract.image_to_string(
+            variant, config=f"{config} --oem 3 --dpi 300"
+        )
     )
-    candidates = engine.recognize(build_variants(image))
-    return [parser.parse(candidate.text) for candidate in candidates]
+    med7 = Med7Validator()
+    candidates = engine.recognize(build_variants(image), psm_modes=(6, 11))
+    records = []
+    for candidate in candidates:
+        record = parser.parse(candidate.text)
+        if not record.medicine_name and med7.available:
+            medication_name = med7.extract_name(candidate.text, parser.drug_names)
+            record = parser.parse(candidate.text, medication_name)
+        records.append(record)
+    return records
 
 
 def choose_consensus(records: List[MedicationRecord]) -> MedicationRecord:
-    required_fields = ("medicine_name", "strength", "quantity")
+    required_fields = ("medicine_name", "strength")
     consensus = {}
     for field in required_fields:
         values = Counter(
@@ -97,27 +79,43 @@ def choose_consensus(records: List[MedicationRecord]) -> MedicationRecord:
             for record in records
             if getattr(record, field)
         )
-        if not values or values.most_common(1)[0][1] < 2:
-            raise ValueError("No matching medication result across OCR variants.")
-        consensus[field] = values.most_common(1)[0][0]
+        if not values:
+            raise ValueError(f"Could not reliably extract {field}.")
+        value, votes = values.most_common(1)[0]
+        if votes < 2:
+            raise ValueError(f"No matching {field} result across OCR variants.")
+        consensus[field] = value
 
-    result = max(
+    quantity_values = Counter(
+        record.quantity for record in records if record.quantity
+    )
+    quantity = quantity_values.most_common(1)[0][0] if quantity_values else ""
+    best_record = max(
         records,
         key=lambda record: sum(
             getattr(record, field) == value
             for field, value in consensus.items()
         ),
     )
-    result.medicine_name = consensus["medicine_name"]
-    result.strength = consensus["strength"]
-    result.quantity = consensus["quantity"]
-    return result
+    return MedicationRecord(
+        medicine_name=consensus["medicine_name"],
+        strength=consensus["strength"],
+        quantity=quantity,
+        dosage_form=best_record.dosage_form,
+        instructions=best_record.instructions,
+        refills=best_record.refills,
+        raw_text=best_record.raw_text,
+        confidence=best_record.confidence,
+        warnings=[],
+    )
 
 
-def scan_and_save(image_path: str, parser: MedicationParser, directory: str = "records") -> Dict[str, object]:
+def scan_and_save(
+    image_path: str,
+    parser: MedicationParser,
+    directory: str = "records",
+) -> Dict[str, object]:
     result = choose_consensus(scan_image(image_path, parser))
-    if result.warnings:
-        raise ValueError("Scan requires user confirmation: " + "; ".join(result.warnings))
     data = result.as_dict()
     data["path"] = save_record(data, directory)
     return data

@@ -10,12 +10,16 @@ from text_normalizer import normalize_text, normalized_search_text
 DOSAGE_PATTERN = re.compile(
     r"\b\d+(?:\.\d+)?\s?(?:mg|mcg|ml|g|iu|h)\b", re.IGNORECASE
 )
+OCR_MG_PATTERN = re.compile(
+    r"\b\d+(?:\.\d+)?\s*(?:ng|th|tq)\b", re.IGNORECASE
+)
 COMPOUND_DOSAGE_PATTERN = re.compile(
     r"\b\d+(?:\.\d+)?-\d+(?:\.\d+)?\s?(?:mg|mcg|ml|g|iu)\b",
     re.IGNORECASE,
 )
 QUANTITY_PATTERNS = (
     re.compile(r"\b(?:qty|quantity)\.?\s*:?\s*(\d+)\b", re.IGNORECASE),
+    re.compile(r"\b(?:[oq]ty|ty)\.?\s*:?\s*(\d+)\b", re.IGNORECASE),
     re.compile(r"#\s?(\d+)\b"),
     re.compile(r"\b(\d+)\s?(?:tablets?|tabs?|capsules?|caps?|pills?)\b", re.IGNORECASE),
 )
@@ -57,6 +61,10 @@ class MedicationParser:
             names = list(drug_names) if drug_names is not None else load_drug_names()
         self._names = {name.casefold(): name for name in names}
 
+    @property
+    def drug_names(self) -> List[str]:
+        return list(self._names.values())
+
     def match_drug_name(self, text: str) -> Tuple[str, float]:
         words = re.findall(r"[A-Za-z][A-Za-z'-]*", text.casefold())
         candidates = words + [
@@ -77,12 +85,29 @@ class MedicationParser:
         return best_name, best_score
 
     @staticmethod
-    def _find_strength(text: str) -> str:
-        match = COMPOUND_DOSAGE_PATTERN.search(text) or DOSAGE_PATTERN.search(text)
-        if not match:
-            return ""
-        strength = match.group(0).upper().replace(" ", "")
-        return strength[:-1] + "MG" if strength.endswith("H") else strength
+    def _find_strength(text: str, medicine_name: str = "") -> str:
+        match = (
+            COMPOUND_DOSAGE_PATTERN.search(text)
+            or DOSAGE_PATTERN.search(text)
+            or OCR_MG_PATTERN.search(text)
+        )
+        if match:
+            strength = match.group(0).upper().replace(" ", "")
+            if strength.endswith(("NG", "TH", "TQ")):
+                return strength[:-2] + "MG"
+            return strength[:-1] + "MG" if strength.endswith("H") else strength
+
+        if medicine_name:
+            name_pattern = re.escape(medicine_name).replace(r"\ ", r"\s+")
+            nearby_number = re.search(
+                rf"\b{name_pattern}\s+(\d{{1,4}})\b", text, re.IGNORECASE
+            )
+            if nearby_number:
+                value = nearby_number.group(1)
+                if len(value) >= 2 and value.endswith("9"):
+                    value = value[:-1] + "0"
+                return f"{value}MG"
+        return ""
 
     @staticmethod
     def _find_quantity(text: str) -> str:
@@ -119,19 +144,23 @@ class MedicationParser:
             frequency = "twice daily"
         return f"TAKE {amount} TABLET BY MOUTH {frequency.upper()}"
 
-    def parse(self, text: str) -> MedicationRecord:
+    def parse(
+        self, text: str, medication_name_hint: Optional[str] = None
+    ) -> MedicationRecord:
         normalized = normalize_text(text)
         search_text = normalized_search_text(normalized)
         name, name_score = self.match_drug_name(search_text)
-        strength = self._find_strength(search_text)
+        if medication_name_hint:
+            hinted_name, hinted_score = self.match_drug_name(medication_name_hint)
+            if hinted_score > name_score:
+                name, name_score = hinted_name, hinted_score
+        strength = self._find_strength(search_text, name)
         instructions = self._find_instructions(search_text)
         quantity = self._find_quantity(search_text)
         warnings: List[str] = []
 
         if not name:
             warnings.append("Medication name was not matched to the local catalogue.")
-        if not quantity:
-            warnings.append("Quantity was not recognized.")
 
         confidence = {
             "medicine_name": FieldConfidence(

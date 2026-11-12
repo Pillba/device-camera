@@ -4,7 +4,8 @@ from typing import List, Optional
 
 from camera_capture import capture_image
 from medication_parser import MedicationParser
-from scanner import scan_and_save
+from scanner import scan_image, choose_consensus
+from storage import save_record
 
 
 def scan_from_camera(
@@ -12,14 +13,24 @@ def scan_from_camera(
     image_path: str = "captures/capture.jpg",
     records_directory: str = "records",
 ) -> dict:
-    """Capture one image, scan it, save the validated record, and return it."""
+    """Capture one image, validate it, save the record, and return it."""
+    result = scan_label(camera_index=camera_index, image_path=image_path)
+    result["path"] = save_record(result, records_directory)
+    return result
+
+
+def scan_label(
+    camera_index: int = 0,
+    image_path: str = "captures/capture.jpg",
+) -> dict:
+    """Capture and validate a label without persisting a medication record."""
     captured_path = capture_image(
         output_path=image_path,
         camera_index=camera_index,
         preview=True,
     )
     parser = MedicationParser("drug_names.txt")
-    return scan_and_save(captured_path, parser, directory=records_directory)
+    return choose_consensus(scan_image(captured_path, parser)).as_dict()
 
 
 def main(argv: Optional[List[str]] = None) -> int:

@@ -28,9 +28,23 @@ python -c "import cv2, pytesseract; print('Python OCR dependencies are available
 tesseract --version
 ```
 
-The new parser does not require spaCy or Med7 directly. The `med7` environment
-is retained for compatibility with the earlier `med_scanner.py` prototype and
-for future clinical NLP experiments.
+The parser uses Tesseract for image-to-text and optionally uses Med7 to validate
+medication-name entities. Strength and quantity remain deterministic regex
+extractions, and the local drug catalogue plus OCR consensus remain required
+before saving a record.
+
+Med7 requires a compatible spaCy model in addition to the Python packages.
+The Med7 model is optional; install it separately if you have a local model
+package or model directory:
+
+```sh
+python -m pip install -r requirements.txt
+python -m spacy package /path/to/en_core_med7_lg ./med7-dist
+```
+
+Then install the generated model package, or set the model name/path used by
+`Med7Validator`. If the model is unavailable, scanning continues with the
+existing catalogue-based parser.
 
 ## Raspberry Pi installation
 
@@ -67,6 +81,14 @@ Connect the USB camera, then capture a fixture without opening a preview window:
 python camera_capture.py --camera-index 0 --output captures/pi-capture.jpg --no-preview
 ```
 
+No-preview capture warms up the camera for two seconds before saving so
+autofocus and exposure can settle. Increase this for a slow-focus camera:
+
+```sh
+python camera_capture.py --camera-index 0 --output captures/pi-capture.jpg \
+  --no-preview --warmup-seconds 5
+```
+
 Run the parser tests with:
 
 ```sh
@@ -87,9 +109,16 @@ python -c "from medication_parser import MedicationParser; from scanner import s
 ```
 
 The scanner requires at least two OCR variants to agree independently on the
-medicine name, dose/strength, and quantity before saving a record.
-If the result is incomplete or uncertain, it raises an error instead of silently
-saving OCR noise.
+medicine name and dose/strength before saving a record. Quantity is optional
+metadata: it is included when OCR finds it but does not reject an otherwise
+valid scan.
+
+The scanner uses five aligned, illumination-resistant label variants. With two
+Tesseract layout modes, this is ten OCR passes instead of the original 58. The
+label crop follows the preview hitbox with a small margin, and consensus merges
+the required fields without carrying warnings from partial OCR crops.
+For best results, keep the label flat, centered in the preview hitbox, and well
+lit.
 
 ## USB camera capture
 
@@ -100,9 +129,11 @@ conda activate med7
 python camera_capture.py --output captures/capture.jpg
 ```
 
-The preview window displays the live camera feed. Press **Space** to save the
-current frame, or **Q** or **Escape** to cancel. To save the first available
-frame without opening a preview window:
+The preview window displays the live camera feed with a centered hitbox. Keep
+the medication label inside the green frame for a clearer capture. Press
+**Space** to save the current frame, or **Q** or **Escape** to cancel. The guide
+is display-only and is not written into the captured image. To save the first
+available frame without opening a preview window:
 
 ```sh
 python camera_capture.py --camera-index 0 --output captures/capture.jpg --no-preview
@@ -129,6 +160,12 @@ device 0, or `--output` and `--records-directory` to choose different paths:
 ```sh
 python camera_scan.py --camera-index 1 --output captures/label.jpg
 ```
+
+The reusable `scan_label()` function in `camera_scan.py` performs the same
+guided capture and consensus validation but returns the structured result
+without writing a file. The Pillba panel uses this function to load a
+medication name and numeric strength for review; the panel does not import or
+persist the scanner's JSON record.
 
 If capture or OCR validation fails, the command prints the error and exits
 without saving a medication record.
@@ -171,19 +208,19 @@ python camera_capture.py --output captures/capture.jpg
 
 ## Project structure
 
-| File                   | Purpose                                               |
-| ---------------------- | ----------------------------------------------------- |
-| `scanner.py`           | End-to-end image scanning and consensus orchestration |
-| `camera_capture.py`    | Standalone USB camera still-image capture             |
+| File                   | Purpose                                                |
+| ---------------------- | ------------------------------------------------------ |
+| `scanner.py`           | End-to-end image scanning and consensus orchestration  |
+| `camera_capture.py`    | Standalone USB camera still-image capture              |
 | `camera_scan.py`       | Capture, process, save, and print one medication label |
-| `ocr_engine.py`        | Tesseract adapter for OCR candidates                  |
-| `text_normalizer.py`   | Line-preserving OCR normalization                     |
-| `medication_parser.py` | Drug matching and field extraction                    |
-| `models.py`            | Typed OCR and medication result models                |
-| `storage.py`           | Atomic JSON record persistence                        |
-| `med_scanner.py`       | Earlier live-camera prototype                         |
-| `pill_bottle_ocr.py`   | Older sample-specific OCR prototype                   |
-| `drug_names.txt`       | Local medication-name catalogue                       |
+| `ocr_engine.py`        | Tesseract adapter for OCR candidates                   |
+| `text_normalizer.py`   | Line-preserving OCR normalization                      |
+| `medication_parser.py` | Drug matching and field extraction                     |
+| `models.py`            | Typed OCR and medication result models                 |
+| `storage.py`           | Atomic JSON record persistence                         |
+| `med_scanner.py`       | Earlier live-camera prototype                          |
+| `pill_bottle_ocr.py`   | Older sample-specific OCR prototype                    |
+| `drug_names.txt`       | Local medication-name catalogue                        |
 
 ## Scope and limitations
 

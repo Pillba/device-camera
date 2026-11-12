@@ -1,8 +1,45 @@
 import argparse
 import os
+import time
 from typing import List, Optional
 
 import cv2
+
+
+def add_capture_guide(frame):
+    """Return a preview copy with a centered medication-label hitbox."""
+    preview = frame.copy()
+    height, width = preview.shape[:2]
+    box_width = int(width * 0.78)
+    box_height = int(height * 0.55)
+    left = (width - box_width) // 2
+    top = (height - box_height) // 2
+    right = left + box_width
+    bottom = top + box_height
+    color = (0, 220, 0)
+
+    cv2.rectangle(preview, (left, top), (right, bottom), color, 2)
+    cv2.putText(
+        preview,
+        "Align medication label inside frame",
+        (left, max(30, top - 12)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        color,
+        2,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        preview,
+        "SPACE: capture  Q/ESC: cancel",
+        (left, min(height - 15, bottom + 30)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        color,
+        2,
+        cv2.LINE_AA,
+    )
+    return preview
 
 
 def open_usb_camera(camera_index: int = 0) -> cv2.VideoCapture:
@@ -31,23 +68,32 @@ def capture_image(
     output_path: str = "captures/capture.jpg",
     camera_index: int = 0,
     preview: bool = True,
+    warmup_seconds: float = 2.0,
 ) -> str:
     """Capture one image from a USB camera and return its path.
 
     With preview enabled, press Space to capture or Q/Escape to cancel.
-    With preview disabled, the first available frame is saved immediately.
+    With preview disabled, frames are discarded during the warm-up period so
+    autofocus and exposure can settle before the image is saved.
     """
+    if warmup_seconds < 0:
+        raise ValueError("warmup_seconds must be non-negative")
+
     camera = open_usb_camera(camera_index)
     try:
+        camera.set(cv2.CAP_PROP_AUTOFOCUS, 1)
+        warmup_until = time.monotonic() + (warmup_seconds if not preview else 0)
         while True:
             success, frame = camera.read()
             if not success:
                 raise RuntimeError("USB camera opened, but no frame was received.")
 
             if not preview:
-                return save_frame(frame, output_path)
+                if time.monotonic() >= warmup_until:
+                    return save_frame(frame, output_path)
+                continue
 
-            cv2.imshow("USB Camera Capture", frame)
+            cv2.imshow("USB Camera Capture", add_capture_guide(frame))
             key = cv2.waitKey(1) & 0xFF
             if key == ord(" "):
                 return save_frame(frame, output_path)
@@ -75,7 +121,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--no-preview",
         action="store_true",
-        help="Save the first available frame without opening a preview window",
+        help="Warm up and save a frame without opening a preview window",
+    )
+    parser.add_argument(
+        "--warmup-seconds",
+        type=float,
+        default=2.0,
+        help="Seconds to warm up autofocus/exposure before capture (default: 2)",
     )
     args = parser.parse_args(argv)
 
@@ -84,7 +136,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             output_path=args.output,
             camera_index=args.camera_index,
             preview=not args.no_preview,
+            warmup_seconds=args.warmup_seconds,
         )
+    except ValueError as error:
+        print(f"Capture failed: {error}")
+        return 1
     except KeyboardInterrupt:
         print("Capture cancelled.")
         return 1
