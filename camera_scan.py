@@ -1,5 +1,6 @@
 import argparse
 import json
+from pathlib import Path
 from typing import List, Optional
 
 from camera_capture import capture_image
@@ -8,28 +9,41 @@ from scanner import scan_image, choose_consensus
 from storage import save_record
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
 def scan_from_camera(
     camera_index: int = 0,
-    image_path: str = "captures/capture.jpg",
-    records_directory: str = "records",
+    image_path: str | None = None,
+    records_directory: str | None = None,
 ) -> dict:
     """Capture one image, validate it, save the record, and return it."""
     result = scan_label(camera_index=camera_index, image_path=image_path)
-    result["path"] = save_record(result, records_directory)
+    record_directory = (
+        Path(records_directory)
+        if records_directory is not None
+        else PROJECT_ROOT / "records"
+    )
+    result["path"] = save_record(result, str(record_directory))
     return result
 
 
 def scan_label(
     camera_index: int = 0,
-    image_path: str = "captures/capture.jpg",
+    image_path: str | None = None,
 ) -> dict:
     """Capture and validate a label without persisting a medication record."""
+    capture_path = (
+        Path(image_path)
+        if image_path is not None
+        else PROJECT_ROOT / "captures" / "capture.jpg"
+    )
     captured_path = capture_image(
-        output_path=image_path,
+        output_path=str(capture_path),
         camera_index=camera_index,
         preview=True,
     )
-    parser = MedicationParser("drug_names.txt")
+    parser = MedicationParser(str(PROJECT_ROOT / "drug_names.txt"))
     return choose_consensus(scan_image(captured_path, parser)).as_dict()
 
 
@@ -45,13 +59,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--output",
-        default="captures/capture.jpg",
-        help="Captured image path (default: captures/capture.jpg)",
+        default=None,
+        help="Captured image path (default: device-camera/captures/capture.jpg)",
     )
     parser.add_argument(
         "--records-directory",
-        default="records",
-        help="Directory for validated JSON records (default: records)",
+        default=None,
+        help="Directory for validated JSON records (default: device-camera/records)",
     )
     args = parser.parse_args(argv)
 
